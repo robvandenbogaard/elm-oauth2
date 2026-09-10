@@ -2,61 +2,75 @@ module Main exposing (main)
 
 import Html
 import Rdf
+import Rdf.Decode
 import Rdf.Graph
-import Rdf.Graph.Decode
+
+
+type alias UserInfo =
+    { topic : Rdf.Iri
+    , issuer : Rdf.Iri
+    }
+
+
+self =
+    Rdf.iri "self"
+
+
+foaf name =
+    Rdf.iri ("http://xmlns.com/foaf/0.1/" ++ name)
+
+
+solid name =
+    Rdf.iri ("http://www.w3.org/ns/solid/terms#" ++ name)
 
 
 main =
     let
         result =
             userInfoResponse
-                |> normaliseWithBase "self"
-                |> Rdf.Graph.parse
+                |> Rdf.Graph.fromTurtleWith Rdf.initialSeed self
+                |> Result.map Tuple.first
+
+        data =
+            result
+                |> Result.withDefault Rdf.Graph.empty
+                |> Rdf.Graph.decode userInfoDecoder
     in
-    case result of
-        Err e ->
-            Rdf.Graph.errorToString userInfoResponse e
+    case data of
+        Ok d ->
+            d
+                |> Debug.toString
                 |> Html.text
                 |> List.singleton
                 |> Html.pre []
 
-        Ok g ->
-            Rdf.Graph.serializeTurtle g
-                |> Html.text
-                |> List.singleton
+        Err de ->
+            [ Rdf.Decode.errorToString de
+            , case result of
+                Err e ->
+                    Rdf.Graph.errorToString userInfoResponse e
+
+                Ok g ->
+                    Rdf.Graph.toTurtle g
+            ]
+                |> List.map Html.text
                 |> Html.pre []
 
 
-normaliseWithBase base turtle =
-    turtle
-        |> ensureBase base
-        |> normalise
-
-
-normalise turtle =
-    turtle
-        |> String.lines
-        |> List.map ensureWhitespaceBeforeFullStop
-        |> String.join "\n"
-
-
-ensureBase base turtle =
-    if String.contains "@base" turtle then
-        turtle
-
-    else
-        "@base <" ++ base ++ "> .\n" ++ turtle
-
-
-ensureWhitespaceBeforeFullStop line =
-    if String.endsWith " ." line then
-        line
-
-    else if String.endsWith "." line then
-        String.dropRight 1 line ++ " ."
-
-    else
-        line
+userInfoDecoder =
+    Rdf.Decode.map2 UserInfo
+        (Rdf.Decode.from (foaf "PersonalProfileDocument")
+            (Rdf.Decode.property (Rdf.inverse Rdf.a)
+                Rdf.Decode.iri
+            )
+        )
+        (Rdf.Decode.from (foaf "Person")
+            (Rdf.Decode.property (Rdf.inverse Rdf.a)
+                (Rdf.Decode.property (solid "oidcIssuer")
+                    Rdf.Decode.iri
+                )
+            )
+        )
 
 
 userInfoResponse =
@@ -65,9 +79,9 @@ userInfoResponse =
 @prefix solid: <http://www.w3.org/ns/solid/terms#>.
 
 <>
-    a foaf:PersonalProfileDocument ;
-    foaf:maker <https://pods.solidcommunity.au/your_name/profile/card#me> ;
-    foaf:primaryTopic <https://pods.solidcommunity.au/your_name/profile/card#me> .
+    a foaf:PersonalProfileDocument;
+    foaf:maker <https://pods.solidcommunity.au/your_name/profile/card#me>;
+    foaf:primaryTopic <https://pods.solidcommunity.au/your_name/profile/card#me>.
 <https://pods.solidcommunity.au/your_name/profile/card#me>
     solid:oidcIssuer <https://pods.solidcommunity.au/>;
     a foaf:Person.

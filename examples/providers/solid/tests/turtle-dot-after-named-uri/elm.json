@@ -17,7 +17,7 @@
             "elm/regex": "1.0.0",
             "elm/time": "1.0.0",
             "elmcraft/core-extra": "2.3.0",
-            "hereon-mb/elm-rdf": "1.1.2",
+            "hereon-mb/elm-rdf": "2.0.0",
             "rtfeldman/elm-iso8601-date-strings": "1.1.4",
             "torreyatcitty/the-best-decimal": "1.1.0",
             "turboMaCk/non-empty-list-alias": "1.4.0"

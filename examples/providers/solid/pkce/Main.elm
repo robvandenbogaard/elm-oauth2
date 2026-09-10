@@ -15,8 +15,8 @@ import Json.Decode as Json
 import OAuth
 import OAuth.AuthorizationCode.PKCE as OAuth
 import Rdf
+import Rdf.Decode
 import Rdf.Graph
-import Rdf.Graph.Decode
 import Url exposing (Protocol(..), Url)
 
 
@@ -56,16 +56,16 @@ configuration =
     , userInfoEndpoint =
         { defaultHttpsUrl | host = "pods.solidcommunity.au", path = "/your_name/profile/card" }
     , userInfoDecoder =
-        Rdf.Graph.Decode.map2 UserInfo
-            (Rdf.Graph.Decode.from (foaf "PersonalProfileDocument")
-                (Rdf.Graph.Decode.property (Rdf.inverse Rdf.a)
-                    Rdf.Graph.Decode.iri
+        Rdf.Decode.map2 UserInfo
+            (Rdf.Decode.from (foaf "PersonalProfileDocument")
+                (Rdf.Decode.property (Rdf.inverse Rdf.a)
+                    Rdf.Decode.iri
                 )
             )
-            (Rdf.Graph.Decode.from (foaf "Person")
-                (Rdf.Graph.Decode.property (Rdf.inverse Rdf.a)
-                    (Rdf.Graph.Decode.property (solid "oidcIssuer")
-                        Rdf.Graph.Decode.iri
+            (Rdf.Decode.from (foaf "Person")
+                (Rdf.Decode.property (Rdf.inverse Rdf.a)
+                    (Rdf.Decode.property (solid "oidcIssuer")
+                        Rdf.Decode.iri
                     )
                 )
             )
@@ -139,7 +139,7 @@ type Error
     | ErrAuthorization OAuth.AuthorizationError
     | ErrAuthentication OAuth.AuthenticationError
     | ErrHTTPGetAccessToken
-    | ErrHTTPGetUserInfo Rdf.Graph.Decode.Error
+    | ErrHTTPGetUserInfo Rdf.Decode.Error String
 
 
 type alias UserInfo =
@@ -152,7 +152,7 @@ type alias Configuration =
     { authorizationEndpoint : Url
     , tokenEndpoint : Url
     , userInfoEndpoint : Url
-    , userInfoDecoder : Rdf.Graph.Decode.Decoder UserInfo
+    , userInfoDecoder : Rdf.Decode.Decoder UserInfo
     , clientId : String
     , scope : List String
     }
@@ -402,17 +402,20 @@ userInfoRequested model token =
 gotUserInfo : Model -> Result Http.Error String -> ( Model, Cmd Msg )
 gotUserInfo model userInfoResponse =
     let
-        parsedUserInfo =
+        userInfoTurtle =
             userInfoResponse
                 |> Result.withDefault ""
-                |> normaliseWithBase (Url.toString configuration.userInfoEndpoint)
-                |> Rdf.Graph.parse
+
+        parsedUserInfo =
+            userInfoTurtle
+                |> Rdf.Graph.fromTurtle Rdf.initialSeed
+                |> Result.map Tuple.first
                 |> Result.withDefault Rdf.Graph.empty
-                |> Rdf.Graph.Decode.decode configuration.userInfoDecoder
+                |> Rdf.Graph.decode configuration.userInfoDecoder
     in
     case parsedUserInfo of
         Err err ->
-            ( { model | flow = Errored (ErrHTTPGetUserInfo err) }
+            ( { model | flow = Errored (ErrHTTPGetUserInfo err userInfoTurtle) }
             , Cmd.none
             )
 
@@ -540,25 +543,29 @@ viewErrored error =
 
 viewError : Error -> Html Msg
 viewError e =
-    text <|
-        case e of
-            ErrStateMismatch ->
-                "'state' doesn't match, the request has likely been forged by an adversary!"
+    case e of
+        ErrStateMismatch ->
+            text "'state' doesn't match, the request has likely been forged by an adversary!"
 
-            ErrFailedToConvertBytes ->
-                "Unable to convert bytes to 'state' and 'codeVerifier', this is likely not your fault..."
+        ErrFailedToConvertBytes ->
+            text "Unable to convert bytes to 'state' and 'codeVerifier', this is likely not your fault..."
 
-            ErrAuthorization error ->
-                oauthErrorToString { error = error.error, errorDescription = error.errorDescription }
+        ErrAuthorization error ->
+            text <| oauthErrorToString { error = error.error, errorDescription = error.errorDescription }
 
-            ErrAuthentication error ->
-                oauthErrorToString { error = error.error, errorDescription = error.errorDescription }
+        ErrAuthentication error ->
+            text <| oauthErrorToString { error = error.error, errorDescription = error.errorDescription }
 
-            ErrHTTPGetAccessToken ->
-                "Unable to retrieve token: HTTP request failed. CORS is likely disabled on the authorization server."
+        ErrHTTPGetAccessToken ->
+            text "Unable to retrieve token: HTTP request failed. CORS is likely disabled on the authorization server."
 
-            ErrHTTPGetUserInfo err ->
-                "Unable to retrieve user info: http/decoding error."
+        ErrHTTPGetUserInfo err input ->
+            article []
+                [ p [] [ text "Unable to retrieve user info: http/decoding error. " ]
+                , pre [] [ text <| Rdf.Decode.errorToString err ]
+                , p [] [ text "Document:" ]
+                , p [] [ pre [] [ text input ] ]
+                ]
 
 
 viewAuthorizationStep : Bool -> Html Msg
@@ -684,35 +691,3 @@ defaultHttpsUrl =
     , query = Nothing
     , fragment = Nothing
     }
-
-
-normaliseWithBase base turtle =
-    turtle
-        |> ensureBase base
-        |> normalise
-
-
-normalise turtle =
-    turtle
-        |> String.lines
-        |> List.map ensureWhitespaceBeforeFullStop
-        |> String.join "\n"
-
-
-ensureBase base turtle =
-    if String.contains "@base" turtle then
-        turtle
-
-    else
-        "@base " ++ base ++ ".\n" ++ turtle
-
-
-ensureWhitespaceBeforeFullStop line =
-    if String.endsWith " ." line then
-        line
-
-    else if String.endsWith "." line then
-        String.dropRight 1 line ++ " ."
-
-    else
-        line
